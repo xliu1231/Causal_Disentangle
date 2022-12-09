@@ -2,6 +2,7 @@ from abc import abstractmethod
 
 import torch
 from torch import nn
+import torch.nn.init as init
 
 
 class View(nn.Module):

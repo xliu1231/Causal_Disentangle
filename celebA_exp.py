@@ -31,8 +31,19 @@ import torch.nn.functional as F
 import pandas as pd
 import numpy as np
 
+from PIL import Image
+
 from torch.utils.data import Dataset, DataLoader
 from vae import VAE
+
+try:
+    from apex.parallel import DistributedDataParallel as DDP
+    from apex.fp16_utils import *
+    from apex import amp, optimizers
+    from apex.multi_tensor_apply import multi_tensor_applier
+except ImportError:
+    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
+
 
 
 class CelebaDataset(Dataset):
@@ -88,13 +99,11 @@ def main():
                                              init_method='env://')
         args.world_size = torch.distributed.get_world_size()
         
-    if args.channels_last:
-        memory_format = torch.channels_last
-    else:
-        memory_format = torch.contiguous_format
+
+    memory_format = torch.contiguous_format
         
     # load and set models
-    model = VAE(z_dim=args.latent_dim)
+    model = VAE(z_dim=args.z_dim)
     model = model.cuda().to(memory_format=memory_format)
     
     if args.distributed:
@@ -178,7 +187,7 @@ def main():
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train(train_loader, model, optimizer, epoch, 0)
+        train(train_loader, model, optimizer, epoch)
         
         
         # save checkpoint
@@ -217,7 +226,7 @@ def train(train_loader, model, optimizer, epoch):
         recons_loss = F.mse_loss(output[0], input)
        
         mu = output[1]
-        logvar = output[2]
+        log_var = output[2]
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
         kld_weight = input.shape[0] / args.train_samples
         
@@ -253,7 +262,7 @@ def train(train_loader, model, optimizer, epoch):
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Speed {3:.3f} ({4:.3f})\t'
-                      'Loss {loss.val:.10f} ({loss.avg:.4f})\t'.format(
+                      'Loss {loss.val:.5f} ({loss.avg:.4f})\t'.format(
                        epoch, i, len(train_loader),
                        args.world_size*args.batch_size/batch_time.val,
                        args.world_size*args.batch_size/batch_time.avg,
@@ -383,11 +392,11 @@ def parse():
     
     
     # outputs: checkpoints and statistics
-    parser.add_argument("--outputs-path", default = "/nfshomes/xliu1231/Causal_Disentangle/experiments/outputs", type = str,
+    parser.add_argument("--outputs-path", default = "/nfshomes/xliu1231/Causal_Disentangle/outputs", type = str,
         help = "The path to the folder storing outputs from training.")
     parser.add_argument("--model-stamp", default = "", type = str,
         help = "The time stamp of the model (as a suffix to the its name).")
-    parser.add_argument("--model-path", default = "/nfshomes/xliu1231/Causal_Disentangle/experiments/models", type = str,
+    parser.add_argument("--model-path", default = "/nfshomes/xliu1231/Causal_Disentangle/models", type = str,
         help = "The folder for all checkpoints in training.")
     
     
@@ -412,6 +421,7 @@ def parse():
                         help='path to latest checkpoint (default: none)')
     
     parser.add_argument('--start-epoch', default=0, type=int)
+    parser.add_argument('--z-dim', default=16, type=int)
     parser.add_argument('--epoch-num', default=100, type=int)
     parser.add_argument("--train-ratio", default = 0.9, type=float,
         help="The ratio of training samples in the .")
@@ -440,6 +450,8 @@ def parse():
     parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
                         metavar='W', help='weight decay (default: 5e-4)')
     parser.set_defaults(sgd=True)
+    
+    return parser.parse_args()
 
 
 
