@@ -1,0 +1,15 @@
+model: causalvae
+dataset: CelebA
+batch size is 128
+Warning:  apex was installed without --cpp_ext.  Falling back to Python flatten and unflatten.
+Warning:  apex was installed without --cpp_ext.  Falling back to Python flatten and unflatten.
+Warning:  apex was installed without --cpp_ext.  Falling back to Python flatten and unflatten.
+Warning:  apex was installed without --cpp_ext.  Falling back to Python flatten and unflatten.
+# of training samples:  50688
+Epoch: [0][10/396]	Time 1.464 (1.464)	Speed 349.690 (349.690)	Loss 2052.61206 (2052.6121)	
+Epoch: [0][20/396]	Time 0.739 (1.102)	Speed 692.569 (464.730)	Loss 2206.07373 (2129.3429)	
+Epoch: [0][30/396]	Time 1.068 (1.090)	Speed 479.390 (469.516)	Loss nan (nan)	
+Epoch: [0][40/396]	Time 0.732 (1.001)	Speed 699.467 (511.560)	Loss nan (nan)	
+Epoch: [0][50/396]	Time 1.065 (1.014)	Speed 480.552 (505.042)	Loss nan (nan)	
+Epoch: [0][60/396]	Time 0.719 (0.965)	Speed 711.960 (530.751)	Loss nan (nan)	
+Epoch: [0][70/396]	Time 1.051 (0.977)	Speed 487.355 (524.084)	Loss nan (nan)	
