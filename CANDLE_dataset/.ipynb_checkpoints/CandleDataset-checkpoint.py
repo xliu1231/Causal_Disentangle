@@ -91,12 +91,12 @@ transform = T.Compose([
     T.ToTensor()
 ])
 
-train_dataset = CandleDataset(data_path="/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/CANDLE-simulator/images",
+train_dataset = CandleDataset(data_path="/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/images",
                               attr_path='CANDLE_label.txt',
                               attr=['cube','sphere'],
                               transform=transform)
 
-train_dataset = entangled_Candle(data_path="/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/CANDLE-simulator/images",
+train_dataset = entangled_Candle(data_path="/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/images",
                               attr_path='CANDLE_label_test.txt',
                             ratio = 0.7,
                               attr=['cube','sphere'],
