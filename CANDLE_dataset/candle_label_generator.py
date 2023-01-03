@@ -76,7 +76,7 @@ def parse():
     parser = argparse.ArgumentParser(description =
         "label generator for candle dataset")
     parser.add_argument('--outfile', default='./CANDLE_label_test.txt', type=str,help = 'file to store the labels')
-    parser.add_argument("--datapath", default= "/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/CANDLE-simulator/images/", type=str,help="The path to the folder stroing the data.")
+    parser.add_argument("--datapath", default= "/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/images/", type=str,help="The path to the folder stroing the data.")
     parser.add_argument('--num-img', default=4, type=int)
     return parser.parse_args(args=[])
 
