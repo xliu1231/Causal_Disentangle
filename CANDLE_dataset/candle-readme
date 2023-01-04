@@ -1,4 +1,4 @@
-First generate data by running CANDLE_simulator.py
+First generate data by running CANDLE_simulator.py (need to install bpy)
 Then get labels for the data by running candle_label_generator.py
 
 CandleDataset.py contains two classes to load all data or entangled/disentangled data according to some assigned ratio
