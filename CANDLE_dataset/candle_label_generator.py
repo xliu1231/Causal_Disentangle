@@ -116,7 +116,7 @@ def main():
     
     del lables_pd["Index Title"]
     
-    lables_pd.to_csv('CANDLE_label_test.txt',sep=' ')
+    lables_pd.to_csv(args.outfile,sep=' ')
     
 if __name__ == "__main__":
     main()
