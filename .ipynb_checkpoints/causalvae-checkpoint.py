@@ -28,7 +28,7 @@ def kaiming_init(m):
             m.bias.data.fill_(0)
 
 
-def kl_normal(qm, qv, pm, pv, device):
+def kl_normal(qm, qv, pm, pv):
     """
     Computes the elem-wise KL divergence between two normal distributions KL(q || p)
     and sum over the last dimension
@@ -36,12 +36,14 @@ def kl_normal(qm, qv, pm, pv, device):
     Return: kl between each sample
     """
     # element-wise operation
-    qm, qv, pm, pv = qm.to(device), qv.to(device), pm.to(device), pv.to(device)
+    #qm, qv, pm, pv = qm.to(device), qv.to(device), pm.to(device), pv.to(device)
     kl =  0.5 * (torch.log(pv) - torch.log(qv) + qv / pv + (qm - pm).pow(2) / pv - 1)
     # sum over all dimensions except for batch
     kl = kl.sum(-1)
     kl = kl.sum(-1)
     # print("log var1", qv)
+    if torch.isnan(kl.any()):
+        print("\n\n\n\noveflow\n\n\n\n\n\n")
     return kl
 
 def conditional_sample_gaussian(m,v, device):
@@ -66,7 +68,7 @@ class CausalDAG(nn.Module):
     
     
     """
-    def __init__(self, num_concepts, dim_per_concept, inference = False, bias=False, g_dim=32, device=None):
+    def __init__(self, num_concepts, dim_per_concept, inference = False, bias=False, g_dim=32):
         
         super(CausalDAG, self).__init__()
         self.num_concepts = num_concepts
@@ -80,26 +82,28 @@ class CausalDAG(nn.Module):
         else:
             self.register_parameter('bias', None)
             
-        self.nets_z = nn.ModuleList
-        self.nets_label = []
+        nets_z = []
+        nets_label = []
         
         
         for _ in range(num_concepts):
-            self.nets_z.append(
+            nets_z.append(
                 nn.Sequential(
-                    nn.Linear(dim_per_concept, g_dim, device=device),
+                    nn.Linear(dim_per_concept, g_dim),
                     nn.ELU(),
-                    nn.Linear(g_dim, dim_per_concept, device=device)
+                    nn.Linear(g_dim, dim_per_concept)
                 )
             )
                 
-            self.nets_label.append(
+            nets_label.append(
                 nn.Sequential(
-                    nn.Linear(1, g_dim, device=device),
+                    nn.Linear(1, g_dim),
                     nn.ELU(),
-                    nn.Linear(g_dim, 1, device=device)
+                    nn.Linear(g_dim, 1)
                 )
             )
+        self.nets_z = nn.ModuleList(nets_z)
+        self.nets_label = nn.ModuleList(nets_label)
         
             
     def calculate_z(self, epsilon):
@@ -134,13 +138,13 @@ class CausalDAG(nn.Module):
             epsilon = F.linear(z, C, self.bias)
         return epsilon
     
-    def mask(self, x, device):
+    def mask(self, x):
         if x.dim() == 2:
-            x = x.unsqueeze(dim=-1)
-        res = torch.matmul(self.A.t(), x.to(device))
+            x = x.unsqueeze(dim=-1).cuda()
+        res = torch.matmul(self.A.t(), x)
         return res
     
-    def g_z(self, x, device):
+    def g_z(self, x):
         """
         apply nonlinearity for more stable approximation
         
@@ -154,17 +158,17 @@ class CausalDAG(nn.Module):
         x = torch.concat(res, dim=1).reshape([-1, self.num_concepts, self.dim_per_concept])
         return x
     
-    def g_label(self, x, device):
+    def g_label(self, x):
         """
         apply nonlinearity for more stable approximation
         
         """
-        # x_flatterned = x.view(-1, self.num_concepts)
-        # concepts = torch.split(x_flatterned, 1, dim = 1)
-        # res = []
-        # for i, concept in enumerate(concepts):
-        #     res.append(self.nets_label[i](concept))
-        #x = torch.concat(res, dim=1).reshape([-1, self.num_concepts])
+        x_flatterned = x.view(-1, self.num_concepts)
+        concepts = torch.split(x_flatterned, 1, dim = 1)
+        res = []
+        for i, concept in enumerate(concepts):
+            res.append(self.nets_label[i](concept))
+        x = torch.concat(res, dim=1).reshape([-1, self.num_concepts])
         return x
             
     def forward(self, x):
@@ -185,7 +189,6 @@ class CausalVAE(BaseVAE):
                  alpha = 1,
                  beta = 0.3,
                  gamma = 1,
-                 device=None,
                  ):
         super(CausalVAE, self).__init__()
         
@@ -197,7 +200,7 @@ class CausalVAE(BaseVAE):
         self.lambdav = lambdav
         
         # network modules
-        self.dag = CausalDAG(num_concepts, dim_per_concept, device)
+        self.dag = CausalDAG(num_concepts, dim_per_concept)
         # attention weight
         self.W = nn.Parameter(torch.nn.init.normal_(torch.zeros(num_concepts, num_concepts), mean=0, std=1))
         
@@ -326,24 +329,24 @@ class CausalVAE(BaseVAE):
         return e
    
     
-    def forward(self, x, label, device):
+    def forward(self, x, label):
         """
         """
         B = x.size()[0] # batch size
         
         e_m, e_v = self.encode(x)
         latent_dim = [B, self.num_concepts, self.dim_per_concept]
-        e_m, e_v = e_m.reshape(latent_dim), torch.ones(latent_dim)  
+        e_m, e_v = e_m.reshape(latent_dim), torch.ones(latent_dim).cuda()  
         
         # z = (I - A.T)^(-1) * eps 
-        z_m, z_v = self.dag.calculate_z(e_m), torch.ones(latent_dim)
+        z_m, z_v = self.dag.calculate_z(e_m), torch.ones(latent_dim).cuda()  
         
-        masked_z_m = self.dag.mask(z_m, device)
-        masked_label = self.dag.mask(label, device)
+        masked_z_m = self.dag.mask(z_m)
+        masked_label = self.dag.mask(label)
         
         # apply nonlinearity
-        masked_z_m = self.dag.g_z(z_m, device)
-        pred_label = self.dag.g_label(masked_label, device)
+        masked_z_m = self.dag.g_z(z_m)
+        pred_label = self.dag.g_label(masked_label)
         
         # attention
         e_tilde = self.attention(e_m, e_m)
@@ -362,27 +365,30 @@ class CausalVAE(BaseVAE):
         
         # KL between eps ~ N(0,1) and Q_phi(eps|x,u)
         p_m, p_v = torch.zeros_like(e_m), torch.ones_like(e_v)
-        kl = self.beta * kl_normal(e_m, e_v, p_m, p_v, device)
+        kl = self.beta * kl_normal(e_m, e_v, p_m, p_v)
         
         # KL between Q_phi(z|x, u) and P_theta(z|u) 
         mean_label = label.mean(dim=0)
         max_label = label.max(dim=0).values
         normalized_label_mean = (label - mean_label) / max_label
         
-        cp_m = einops.repeat(normalized_label_mean, 'b d -> b d repeat', repeat=self.dim_per_concept)
-        cp_v = torch.ones_like(z_v)
+        cp_m = einops.repeat(normalized_label_mean, 'b d -> b d repeat', repeat=self.dim_per_concept).cuda()  
+        cp_v = torch.ones_like(z_v).cuda()  
+        kl += self.gamma * kl_normal(z_m, z_v, cp_m, cp_v)
         
-        kl += self.gamma * kl_normal(z_m, z_v, cp_m, cp_v, device)
+        if torch.isnan(kl.mean()):
+            print(kl)
         
-        kl = kl.sum()
+        kl = kl.mean()
         
         # constraints
-        lm = kl_normal(z, cp_v, cp_m, cp_v, device)
-        lm = lm.sum()
+        lm = kl_normal(z, cp_v, cp_m, cp_v)
         
-       
-        lu = F.mse_loss(pred_label.squeeze(dim=-1).to(device), label.to(device)).to(device)
-        lu = lu.sum()
+        lm = lm.mean()
+        
+        lu = F.mse_loss(pred_label.squeeze(dim=-1).cuda(), label.cuda())
+        lu = lu.mean()
+        
             
         return rec, kl, lm, lu, rec_x, masked_label, self.dag.A
     

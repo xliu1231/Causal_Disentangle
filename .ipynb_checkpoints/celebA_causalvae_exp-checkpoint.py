@@ -28,13 +28,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import pandas as pd
 import numpy as np
 
 from PIL import Image
 
 from torch.utils.data import Dataset, DataLoader
 from causalvae import CausalVAE, CausalDAG 
+from datasets import CelebaDataset
 
 try:
     from apex.parallel import DistributedDataParallel as DDP
@@ -45,32 +45,6 @@ except ImportError:
     raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
 
 
-
-class CelebaDataset(Dataset):
-    """Custom Dataset for loading CelebA face images"""
-
-    def __init__(self, data_path, attr_path, attr=[], transform=None):
-    
-        df = pd.read_csv(attr_path, sep="\s+", skiprows=1, index_col=0)
-        df = df.replace(-1, 0)
-        self.data_path = data_path
-        self.attr_path = attr_path
-        self.img_names = df.index.values
-        self.target = df[attr].values if attr else df.values
-        self.transform = transform
-
-    def __getitem__(self, index):
-        img = Image.open(os.path.join(self.data_path,
-                                      self.img_names[index]))
-        
-        if self.transform is not None:
-            img = self.transform(img)
-        
-        label = self.target[index]
-        return img, label
-
-    def __len__(self):
-        return self.target.shape[0]
     
 
 def matrix_poly(matrix, d):
@@ -116,7 +90,7 @@ def main():
     memory_format = torch.contiguous_format
         
     # load and set models
-    model = CausalVAE(args.z_dim, args.num_concepts, args.dim_per_concept, device=torch.device(args.gpu))
+    model = CausalVAE(args.z_dim, args.num_concepts, args.dim_per_concept)
     model = model.cuda().to(memory_format=memory_format)
     
     if args.distributed:
@@ -200,7 +174,7 @@ def main():
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train(train_loader, model, optimizer, epoch, torch.device(args.gpu))
+        train(train_loader, model, optimizer, epoch)
         
         
         # save checkpoint
@@ -212,13 +186,18 @@ def main():
             }, str(args.model) + "_" + str(epoch))
             
             
-def train(train_loader, model, optimizer, epoch, device):
+def train(train_loader, model, optimizer, epoch):
     """
         Model training
 
     """
     batch_time = AverageMeter()
     losses = AverageMeter()
+    recs = AverageMeter()
+    kls = AverageMeter()
+    lms = AverageMeter()
+    lus = AverageMeter()
+    hs = AverageMeter()
     
     
    
@@ -238,10 +217,14 @@ def train(train_loader, model, optimizer, epoch, device):
         # compute output
         target = target.type(torch.FloatTensor)
         
-        output = model(input, target, device)
+        output = model(input, target)
         
         # rec, kl, lm, lu, rec_x, masked_label
         loss = output[0] + output[1] + output[2] + output[3]
+        rec = output[0]
+        kl = output[1]
+        lm = output[2]
+        lu = output[3]
         
         dag_param = output[-1]
         
@@ -250,11 +233,13 @@ def train(train_loader, model, optimizer, epoch, device):
         A = dag_param
         m = dag_param.size()[0]
         A_square = A * A
-        x = torch.eye(m).to(device) + torch.div(A_square, m)
+        x = torch.eye(m).cuda() + torch.div(A_square, m)
         expm_A = torch.matrix_power(x, m)
         h_a = torch.trace(expm_A) - m
         
-        loss = loss + 3*h_a + 0.5*h_a*h_a 
+        h = 3*h_a + 0.5*h_a*h_a 
+        
+        loss = loss + h
         
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -269,16 +254,30 @@ def train(train_loader, model, optimizer, epoch, device):
             # Average loss and accuracy across processes for logging
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data)
+                reduced_rec = reduce_tensor(rec.data)
+                reduced_kl = reduce_tensor(kl.data)
+                reduced_lm = reduce_tensor(lm.data)
+                reduced_lu = reduce_tensor(lu.data)
+                reduced_h = reduce_tensor(h.data)
             else:
                 reduced_loss = loss.data
+                reduced_rec = rec.data
+                reduced_kl = kl.data
+                reduced_lm = lm.data
+                reduced_lu = lu.data
+                reduced_h = h.data
 
             # to_python_float incurs a host<->device sync
             losses.update(to_python_float(reduced_loss), input.size(0))
+            recs.update(to_python_float(reduced_rec), input.size(0))
+            kls.update(to_python_float(reduced_kl), input.size(0))
+            lms.update(to_python_float(reduced_lm), input.size(0))
+            lus.update(to_python_float(reduced_lu), input.size(0))
+            hs.update(to_python_float(reduced_h), input.size(0))
 
             torch.cuda.synchronize()
             batch_time.update((time.time() - end)/args.print_freq)
             end = time.time()
-
 
             if args.local_rank == 0:
                 learning_rate = optimizer.param_groups[0]['lr']
@@ -286,12 +285,24 @@ def train(train_loader, model, optimizer, epoch, device):
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Speed {3:.3f} ({4:.3f})\t'
-                      'Loss {loss.val:.5f} ({loss.avg:.4f})\t'.format(
+                      'Total Loss {loss.val:.5f} ({loss.avg:.4f})\t'
+                      'Reconstruction {rec.avg:.4f} '
+                      'KL {kl.avg:.4f} '
+                      'lm {lm.avg:.4f} '
+                      'lu {lu.avg: .4f} '
+                      'h {h.val: .4f} '.format(
                        epoch, i, len(train_loader),
                        args.world_size*args.batch_size/batch_time.val,
                        args.world_size*args.batch_size/batch_time.avg,
                        batch_time=batch_time,
-                       loss=losses))
+                       loss=losses,
+                       rec = recs,
+                       kl = kls,
+                       lm = lms,
+                       lu = lus,
+                        h = hs
+                      )
+                     )
        
         input, target = prefetcher.next()
         
