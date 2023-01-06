@@ -17,7 +17,7 @@ parser.add_argument('--start', default=0, type=int)
 parser.add_argument('--output-dir', default='./images/', type=str)
 parser.add_argument('--num-objects', default=1, type=int)
 # args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
-args = parser.parse_args(args=[])
+args = parser.parse_args()
 
 logging.basicConfig(level=logging.INFO)
 os.close(1)

@@ -15,7 +15,7 @@ Labels:
 """
 class entangled_Candle(Dataset):
     """Load entangled dataset for training"""
-    def __init__(self, data_path, attr_path, ratio, transform=None):
+    def __init__(self, data_path, attr_path, attr = [], ratio, transform=None):
         df = pd.read_csv(attr_path, sep=" ", index_col=0)
         df = df.replace(-1, 0)
         self.data_path = data_path
@@ -35,7 +35,7 @@ class entangled_Candle(Dataset):
         return img, label
     
     def __len__(self):
-        return self.target.shape[0]
+        return len(self.img_names)
     
     def entangled(self,attr_path,ratio):
         df = pd.read_csv(attr_path, sep=" ", index_col=0)
@@ -92,7 +92,7 @@ transform = T.Compose([
 ])
 
 train_dataset = CandleDataset(data_path="/cmlscratch/margot98/Causal_Disentangle/CANDLE_dataset/images",
-                              attr_path='CANDLE_label.txt',
+                              attr_path='CANDLE_label_test.txt',
                               attr=['cube','sphere'],
                               transform=transform)
 

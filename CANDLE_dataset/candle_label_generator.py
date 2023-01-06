@@ -9,7 +9,6 @@ import os
 import numpy as np
 import PIL
 import scipy.io as sio
-from six.moves import range
 from sklearn.utils import extmath
 import json
 from PIL import Image
