@@ -345,11 +345,11 @@ class CausalVAE(BaseVAE):
         masked_label = self.dag.mask(label)
         
         # apply nonlinearity
-        masked_z_m = self.dag.g_z(z_m)
+        masked_z_m = self.dag.g_z(masked_z_m)
         pred_label = self.dag.g_label(masked_label)
         
         # attention
-        e_tilde = self.attention(e_m, e_m)
+        e_tilde = self.attention(e_m, z_m)
         
         # z for predicting label u
         z_approx = masked_z_m + e_tilde
