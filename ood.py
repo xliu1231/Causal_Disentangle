@@ -84,7 +84,7 @@ def parse():
     parser.add_argument('--freeze_encoder', action='store_true', default=False,
                         help='If true, freeze the encoder')
     parser.add_argument('--eval_only', action='store_true', default=False,
-                        help='If true, evaluate classifier without training')  # todo: haven't done
+                        help='If true, evaluate classifier without training')
     parser.add_argument('--eval_model_path', type=str, default='/cmlscratch/bangan/project/caulsal_disentangle/save_classifier/tmp_checkpoint.pth.tar',
                         help='Path of the trained classifier.')
 
@@ -116,14 +116,14 @@ def load_data(args):
     if args.dataset == '3dshape':
         transform = T.ToTensor()
         ind_set = ShapeDataset(data_path=args.ind_data_path, attr_path=args.ind_attr_path,
-                               attr=args.label_idx, transform=transform)  # todo: attr list?
+                               attr=args.label_idx, transform=transform)
         len_train = int(len(ind_set) * args.ratio)
         ind_train_set, ind_test_set = random_split(ind_set, [len_train, len(ind_set) - len_train],
                                                    generator=torch.Generator().manual_seed(
                                                        args.seed))
 
         ood_test_set = ShapeDataset(data_path=args.ood_data_path, attr_path=args.ood_attr_path,
-                                    attr=args.label_idx, transform=transform)  # todo: attr list?
+                                    attr=args.label_idx, transform=transform)
 
     else:
         raise Exception(f'Unknown dataset {args.dataset}')
