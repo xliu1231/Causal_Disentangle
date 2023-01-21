@@ -11,6 +11,7 @@ from vae import VAE
 from causalvae import CausalVAE, CausalDAG
 from datasets import ShapeDataset
 import torch.optim as optim
+from collections import OrderedDict
 
 
 def parse():
@@ -25,15 +26,23 @@ def parse():
                         help="The image width  of each sample.")
     parser.add_argument("--image_channels", default=3, type=int,
                         help="The number of channels in each sample.")
-    parser.add_argument("--ind_data_path", default=None, type=str,
+    parser.add_argument("--ind_data_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/3dshape_3',
+                        type=str,
                         help="The path to the folder stroing the data.")
-    parser.add_argument("--ind_attr_path", default=None, type=str,
+    parser.add_argument("--ind_attr_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/3dshape_3/label.csv',
+                        type=str,
                         help="The path to the folder stroing the attribute of the data.")
-    parser.add_argument("--ood_data_path", default=None, type=str,
+    parser.add_argument("--ood_data_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/3dshape_2',
+                        type=str,
                         help="The path to the folder stroing the data.")
-    parser.add_argument("--ood_attr_path", default=None, type=str,
+    parser.add_argument("--ood_attr_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/3dshape_2/label.csv',
+                        type=str,
                         help="The path to the folder stroing the attribute of the data.")
-    parser.add_argument("--label_idx", default=5, type=int,
+    parser.add_argument("--label_idx", default=4, type=int,
                         choices=[0, 1, 2, 3, 4, 5],
                         help="Use which attribute as the label. The index of the attribute in "
                              "['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']")
@@ -45,17 +54,19 @@ def parse():
     parser.add_argument('--z_dim', default=128, type=int)
     parser.add_argument('--num_concepts', default=4, type=int)
     parser.add_argument('--dim_per_concept', default=32, type=int)
-    parser.add_argument("--model_path", default=None, type=str,
+    parser.add_argument("--model_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/ckpt/vae_20_checkpoint.pth.tar',
+                        type=str,
                         help="Path of the trained model.")
 
     # training
     parser.add_argument("--batch_size", default=128, type=int, metavar='B',
                         help="The batch size for training.")
     parser.add_argument('--workers', type=int, default=4)
-    parser.add_argument('--epoch_num', default=100, type=int)
-    parser.add_argument("--train_ratio", default=0.9, type=float,
+    parser.add_argument('--epoch_num', default=2, type=int)
+    parser.add_argument("--ratio", default=0.9, type=float,
                         help="The ratio of training samples in the .")
-    parser.add_argument("--val_epoch", default=10, type=int,
+    parser.add_argument("--val_epoch", default=1, type=int,
                         help="Log the learning curve every print_freq iterations.")
 
     # optimization
@@ -74,14 +85,16 @@ def parse():
                         help='If true, freeze the encoder')
     parser.add_argument('--eval_only', action='store_true', default=False,
                         help='If true, evaluate classifier without training')  # todo: haven't done
-    parser.add_argument('--eval_model_path', type=str, default=None,
+    parser.add_argument('--eval_model_path', type=str, default='/cmlscratch/bangan/project/caulsal_disentangle/save_classifier/tmp_checkpoint.pth.tar',
                         help='Path of the trained classifier.')
 
     # others
     parser.add_argument("--seed", type=int, default=1, metavar='S', help="random seed (default: 1)")
-    parser.add_argument("--save_path", default=None, type=str,
+    parser.add_argument("--save_path",
+                        default='/cmlscratch/bangan/project/caulsal_disentangle/save_classifier',
+                        type=str,
                         help="The path to save model.")
-    parser.add_argument("--save_name", default="", type=str,
+    parser.add_argument("--save_name", default="tmp", type=str,
                         help="The name of the saved model.")
 
     return parser.parse_args()
@@ -103,18 +116,29 @@ def load_data(args):
     if args.dataset == '3dshape':
         transform = T.ToTensor()
         ind_set = ShapeDataset(data_path=args.ind_data_path, attr_path=args.ind_attr_path,
-                               attr=args.label, transform=transform)  # todo: attr list?
+                               attr=args.label_idx, transform=transform)  # todo: attr list?
         len_train = int(len(ind_set) * args.ratio)
         ind_train_set, ind_test_set = random_split(ind_set, [len_train, len(ind_set) - len_train],
                                                    generator=torch.Generator().manual_seed(
                                                        args.seed))
 
         ood_test_set = ShapeDataset(data_path=args.ood_data_path, attr_path=args.ood_attr_path,
-                                    attr=args.label, transform=transform)  # todo: attr list?
+                                    attr=args.label_idx, transform=transform)  # todo: attr list?
 
     else:
         raise Exception(f'Unknown dataset {args.dataset}')
     return ind_train_set, ind_test_set, ood_test_set
+
+
+def load_to_model(model, saved_model_path):
+    checkpoint = torch.load(saved_model_path)
+    new_state_dict = OrderedDict()
+    for k, v in checkpoint['state_dict'].items():
+        name = k[7:]  # remove `module.`
+        new_state_dict[name] = v
+    # load params
+    model.load_state_dict(new_state_dict)
+    return model
 
 
 def resume(model, model_path):
@@ -126,7 +150,6 @@ def resume(model, model_path):
     else:
         print("=> no checkpoint found at '{}'".format(model_path))
     return model
-
 
 class Classifier(nn.Module):
     def __init__(self, encoder: nn.Module, z_dim: int, num_class: int):
@@ -227,7 +250,7 @@ def eval(args, val_loader, model):
     with torch.no_grad():
         for _, (inputs, labels) in enumerate(val_loader):
             inputs = inputs.to(args.device)
-            labels = labels.to(args.device)
+            labels = labels.to(torch.long).to(args.device)
             outputs = model(inputs)
             prec = accuracy(outputs, labels)[0]
             accs.update(prec.item(), inputs.size(0))
@@ -249,7 +272,7 @@ def main(args):
                             num_workers=args.workers)
 
     # make model
-    num_class = get_num_class(args.label_idx)
+    num_class = get_num_class(args.label_idx, args.dataset)
     if args.model_type == 'vae':
         unsup_model = VAE(z_dim=args.z_dim)
     elif args.model_type == 'causalvae':
@@ -257,11 +280,12 @@ def main(args):
 
     # load pre-trained model
     if not args.train_from_scratch:
-        unsup_model = resume(unsup_model, args.model_path)
+        unsup_model = load_to_model(unsup_model, args.model_path)
 
     # define classifier
     encoder = unsup_model.encoder
     model = Classifier(encoder, args.z_dim, num_class)
+    print(model)
     model = model.to(args.device)
 
     # define loss function and optimizer
@@ -276,7 +300,8 @@ def main(args):
         for batch_idx, (inputs, labels) in enumerate(train_loader):
             # get data
             inputs = inputs.to(args.device)
-            labels = labels.to(args.device)
+            labels = labels.to(torch.long).to(
+                args.device)  # todo: choose label to be categorical attribute or change it to category in ShapeDataset
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -290,7 +315,7 @@ def main(args):
 
             # update results
             losses.update(loss.item(), inputs.size(0))
-        train_acc = eval(args, ind_train_set, model)
+        train_acc = eval(args, train_loader, model)
         now = datetime.datetime.now()
         print(
             '[{}] Epoch {:2d} | Loss {:.4f} | Acc {:.2f}%'.format(now.strftime('%Y-%m-%d %H:%M:%S'),
@@ -326,8 +351,46 @@ def main(args):
     return
 
 
+def eval_only(args):
+    # load data
+    ind_train_set, ind_test_set, ood_test_set = load_data(args)
+    print('In-distribution training set size:', len(ind_train_set))
+    print('In-distribution test set size:', len(ind_test_set))
+    print('Out-of-distribution test set size:', len(ood_test_set))
+
+    # train_loader = DataLoader(ind_train_set, batch_size=args.batch_size, shuffle=True,
+    #                           num_workers=args.workers)
+    test_loader = DataLoader(ind_test_set, batch_size=args.batch_size, shuffle=False,
+                             num_workers=args.workers)
+    ood_loader = DataLoader(ood_test_set, batch_size=args.batch_size, shuffle=False,
+                            num_workers=args.workers)
+
+    # make model
+    num_class = get_num_class(args.label_idx, args.dataset)
+    if args.model_type == 'vae':
+        unsup_model = VAE(z_dim=args.z_dim)
+    elif args.model_type == 'causalvae':
+        unsup_model = CausalVAE(args.z_dim, args.num_concepts, args.dim_per_concept)
+
+    # load model
+    encoder = unsup_model.encoder
+    model = Classifier(encoder, args.z_dim, num_class)
+    print(model)
+    model = resume(model, args.eval_model_path)
+    model = model.to(args.device)
+
+    # eval
+    ind_acc = eval(args, test_loader, model)
+    ood_acc = eval(args, ood_loader, model)
+    print(
+        'Test: Ind Acc is {:.2f}%, Ood Acc is {:.2f}%'.format(ind_acc, ood_acc))
+
+
 if __name__ == "__main__":
     args = parse()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     print(args)
-    main(args)
+    if args.eval_only:
+        eval_only(args)
+    else:
+        main(args)

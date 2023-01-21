@@ -40,6 +40,8 @@ class ShapeDataset(Dataset):
     def __init__(self, data_path, attr_path, attr=[0 ,1 ,2 ,3 ,4 ,5], transform=None):
     
         df = pd.read_csv(attr_path, header=None)
+        self.img_names = [f for f in os.listdir(data_path) if f.endswith('.jpg')]
+        self.img_names.sort()
         self.data_path = data_path
         self.attr_path = attr_path
         self.attr = attr
@@ -47,16 +49,15 @@ class ShapeDataset(Dataset):
         self.transform = transform
 
     def __getitem__(self, index):
-        img = Image.open(os.path.join(self.data_path,
-                                      self.img_names[index]))
+        img = Image.open(os.path.join(self.data_path, self.img_names[index]))
         
         if self.transform is not None:
             img = self.transform(img)
-            
-        for factor in self.attr:
-            if factor not in [0, 1, 2, 3, 4, 5]:
-                raise Exception(f'Unknown factor index {factor}')
-        
+        #
+        # for factor in self.attr:
+        #     if factor not in [0, 1, 2, 3, 4, 5]:
+        #         raise Exception(f'Unknown factor index {factor}')
+
         label = self.target[index]
         return img, label
 
