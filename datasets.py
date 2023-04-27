@@ -34,9 +34,10 @@ class CelebaDataset(Dataset):
 class ShapeDataset(Dataset):
     """Custom Dataset for loading 3D shape images"""
 
-    def __init__(self, data_path, attr_path, attr=[0, 1, 2, 3, 4, 5], transform=None):
-        df = pd.read_csv(attr_path, header=None)
-        self.img_names = [f for f in os.listdir(data_path) if f.endswith('.jpg')]
+    def __init__(self, data_path, attr_path, attr=['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation'], transform=None):
+        df = pd.read_csv(attr_path)
+        df.sort_values(by=['img_name']) # first column is the image name, sort by image names
+        self.img_names = [f for f in os.listdir(data_path) if f.endswith('jpg')]
         self.img_names.sort()
         self.data_path = data_path
         self.attr_path = attr_path
@@ -49,10 +50,6 @@ class ShapeDataset(Dataset):
 
         if self.transform is not None:
             img = self.transform(img)
-        #
-        # for factor in self.attr:
-        #     if factor not in [0, 1, 2, 3, 4, 5]:
-        #         raise Exception(f'Unknown factor index {factor}')
 
         label = self.target[index]
         return img, label
