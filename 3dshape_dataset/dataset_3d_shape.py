@@ -88,7 +88,8 @@ def sample_3dshape_dataset(factors_distribution, data_size, data_path, label_pat
             
             # add identifier for each data
             label.insert(0, str(idx)+'.jpg')
-            label.append(new_label[1])
+            if new_label:
+                label.append(new_label[1])
             
             writer.writerow(label)
     return
