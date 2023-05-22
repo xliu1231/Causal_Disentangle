@@ -50,13 +50,12 @@ class View(nn.Module):
 # python -m torch.distributed.launch --nproc_per_node=4 run_doVAE.py 
 # 
 #     
-class doVAE(nn.Module):
+class VAE(nn.Module):
 
-    def __init__(self,z_dim, c_dim, in_channels=3):
-        super(doVAE, self).__init__()
+    def __init__(self,z_dim, in_channels=3):
+        super(VAE, self).__init__()
         
         self.z_dim = z_dim
-        self.c_dim = c_dim
         # encoder output dim: c_Num*z_dim for mu_z, c_Num*z_dim for sigma_z, c_Num for mu_pi, c_Num for sigma_mu
         self.model_encoder= nn.Sequential(
             # B,  32, 32, 32
@@ -82,8 +81,7 @@ class doVAE(nn.Module):
             View((-1, 256*1*1)),                 # B, 256
             
             # for mu and logvar
-            nn.Linear(256,  c_dim*(2*z_dim+2)),      
-        )
+            nn.Linear(256,  2*z_dim))
         
             
         self.model_decoder = nn.Sequential(
@@ -114,22 +112,11 @@ class doVAE(nn.Module):
                 kaiming_init(m)
         
                 
-    def encode(self, X):
-        
-        result = self.model_encoder(X)
-        X_len = X.shape[0]
-        mu = torch.zeros(X_len,self.c_dim * self.z_dim)
-        logvar = torch.zeros(X_len,self.c_dim * self.z_dim)
-        mu_pi = torch.zeros(X_len,self.c_dim)
-        var_pi = torch.zeros(X_len,self.c_dim)
-        for c in range(self.c_dim):
-            mu[:,c*self.z_dim:(c+1)*self.z_dim] = result[:,c*self.z_dim : (c+1)*self.z_dim]
-            logvar[:,c*self.z_dim:(c+1)*self.z_dim] = result[:,(self.c_dim+c)*self.z_dim : (self.c_dim+c+1)*self.z_dim]
-            mu_pi[:,c] = result[:,2*self.c_dim*self.z_dim + c]
-            var_pi[:,c] = result[:,2*self.c_dim*self.z_dim + self.c_dim + c]
-                                
-        
-        return mu, logvar, mu_pi, var_pi
+    def encode(self, x):
+        result = self.model_encoder(x) # B x 2D
+        mu = result[:, :self.z_dim]
+        logvar = result[:, self.z_dim:]
+        return mu, logvar
                                  
     
     def decode(self, z):
@@ -137,59 +124,30 @@ class doVAE(nn.Module):
         return self.model_decoder(z)
     
     
-    def generate(self, num_samples, current_device):                         
-        z = torch.randn(num_samples, self.z_dim)
-        z = z.to(current_device)
-        samples = self.decode(z)
-        return samples
+    def reparametrize(self,mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
     
 
-    def reparameterize(self, mu, logvar,mu_pi,var_pi):
-        X_len = mu.shape[0]
-        z_all = torch.zeros(X_len, self.z_dim)
-        Pi = torch.zeros(X_len, self.c_dim)
-        for c in range(self.c_dim):
-            std = torch.exp(0.5 * logvar[:,c*self.z_dim:(c+1)*self.z_dim])
-            eps = torch.randn_like(std)
-            curr_z = eps * std + mu[:,c*self.z_dim:(c+1)*self.z_dim]
-
-            std_pi = torch.exp(0.5 * var_pi[:,c])
-            eps_pi = torch.randn_like(std_pi)
-            curr_pi = eps_pi * std_pi + mu_pi[:,c]
-
-            z_all += curr_z * curr_pi[:,None]
-            Pi[:,c] = curr_pi
-        return z_all, Pi
-    
-    
-
-    def forward(self, X):
-        mu, logvar, mu_pi, var_pi = self.encode(X)
-        z,Pi = self.reparameterize(mu, logvar, mu_pi, var_pi)
-        z,Pi = z.to(device), Pi.to(device)
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparametrize(mu, logvar)
+        z = z.to(device)
         reconstructed_z = self.decode(z)
-        return reconstructed_z, mu, logvar, Pi
+        return reconstructed_z, mu, logvar
     
-def calculate_loss(X, reconstructed_z, mu, logvar, Pi, label, z_dim, c_dim, pi_weight = 1.0, kl_weight = 1.0):
-    """
-    Loss term currently contains: reconstruction loss, classification loss for p(c|x)
-    """
-    # classification loss:
-    criterion = nn.CrossEntropyLoss()
-    pi_loss = criterion(Pi, label.float())
     
+    
+def calculate_loss(X, reconstructed_z, mu, logvar, kl_weight = 1.0):
     # reconstruction loss:
     rec_loss = F.mse_loss(reconstructed_z, X)
     
-    kld_loss = 0
-    for c in range(c_dim):
-        # regulate to be N(mu_c, I), where mu_c learnt from NN
-        log_var_c = logvar[:,c*z_dim:(c+1)*z_dim]
-        kld_loss += torch.mean(-0.5 * torch.sum(1 + log_var_c - log_var_c.exp(), dim = 1), dim = 0)
-
-    loss = rec_loss + pi_weight * pi_loss + kl_weight * kld_loss
+    kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim = 1), dim = 0)
     
-    return loss, rec_loss, pi_loss, kld_loss
+    loss = rec_loss +kl_weight * kld_loss
+    
+    return loss, rec_loss, kld_loss
         
     
 
@@ -228,8 +186,7 @@ def main():
 
 
     z_dim = 4
-    c_dim = 2
-    model = doVAE(z_dim, c_dim)
+    model = VAE(z_dim)
     device = torch.device("cuda:{}".format(rank))
     model = model.to(device)
 
@@ -253,23 +210,22 @@ def main():
         ddp_model.train()
         i = 0
         for x, target in train_loader:
-            ### labels
-            enc = OneHotEncoder(handle_unknown='ignore')
-            enc.fit(target)
-            target = torch.from_numpy(enc.transform(target).toarray())
-            #####
+            # ### labels
+            # enc = OneHotEncoder(handle_unknown='ignore')
+            # enc.fit(target)
+            # target = torch.from_numpy(enc.transform(target).toarray())
+            # #####
             x = x.to(device)
             target = target.to(device)
 
             i += 1
             batch_time = AverageMeter()
             rec_losses = AverageMeter()
-            pi_losses = AverageMeter()
             kl_losses = AverageMeter()
             losses = AverageMeter()
             end = time.time()
-            reconstructed_z, mu, logvar, Pi = ddp_model(x)
-            loss, rec_loss, pi_loss,kld_loss = calculate_loss(x, reconstructed_z, mu, logvar, Pi, target, z_dim, c_dim)
+            reconstructed_z, mu, logvar = ddp_model(x)
+            loss, rec_loss, kld_loss = calculate_loss(x, reconstructed_z, mu, logvar)
 
             # compute gradient and do SGD step
             optimizer.zero_grad()
@@ -280,11 +236,9 @@ def main():
         
                 reduced_loss = loss.data
                 reduced_rec = rec_loss.data
-                reduced_pi = pi_loss.data
                 reduced_kl = kld_loss.data
                 losses.update(float(reduced_loss), x.size(0))
                 rec_losses.update(float(reduced_rec), x.size(0))
-                pi_losses.update(float(reduced_pi), x.size(0))
                 kl_losses.update(float(reduced_kl), x.size(0))
                 torch.cuda.synchronize()
                 batch_time.update((time.time() - end)/15)
@@ -293,13 +247,11 @@ def main():
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Loss {loss.val:.5f} ({loss.avg:.4f})\t'
-                      'Reconstruction loss {rec_loss.avg:.4f}\t'
-                      'loss for pi {pi_loss.avg:.4f}\t'.format(
+                      'Reconstruction loss {rec_loss.avg:.4f}\t'.format(
                             epoch, i, len(train_loader),
                             batch_time=batch_time,
                             loss=losses,
-                            rec_loss = rec_losses,
-                      pi_loss = pi_losses))
+                            rec_loss = rec_losses))
 
         
 if __name__ == '__main__':
